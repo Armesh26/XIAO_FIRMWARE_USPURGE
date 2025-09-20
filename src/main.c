@@ -21,11 +21,11 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 /* Milliseconds to wait for a block to be read. */
 #define READ_TIMEOUT     1000
 
-/* Circular ring buffer for continuous audio streaming */
-#define RING_BUFFER_SIZE 8192  // 8KB circular buffer
-#define CHUNK_SIZE 20          // BLE packet size
+/* Circular ring buffer for continuous audio streaming - INT16_T SAMPLES */
+#define RING_BUFFER_SAMPLES 16384  // 16K samples = 32KB
+#define CHUNK_SAMPLES 160          // 160 samples per BLE packet (320 bytes) - like omi
 
-static uint8_t ring_buffer[RING_BUFFER_SIZE];
+static int16_t ring_buffer[RING_BUFFER_SAMPLES];
 static volatile uint32_t write_pos = 0;
 static volatile uint32_t read_pos = 0;
 static struct k_mutex ring_mutex;
@@ -50,20 +50,20 @@ static const struct bt_data sd[] = {
 static const struct device *dmic_dev;
 static bool dmic_started = false;
 
-/* Ring buffer functions */
-static uint32_t ring_buffer_available_space(void)
+/* Ring buffer functions - SAMPLE-BASED (int16_t) */
+static uint32_t ring_buffer_available_samples(void)
 {
     uint32_t w = write_pos;
     uint32_t r = read_pos;
     
     if (w >= r) {
-        return RING_BUFFER_SIZE - (w - r) - 1;
+        return RING_BUFFER_SAMPLES - (w - r) - 1;
     } else {
         return r - w - 1;
     }
 }
 
-static uint32_t ring_buffer_used_space(void)
+static uint32_t ring_buffer_used_samples(void)
 {
     uint32_t w = write_pos;
     uint32_t r = read_pos;
@@ -71,39 +71,39 @@ static uint32_t ring_buffer_used_space(void)
     if (w >= r) {
         return w - r;
     } else {
-        return RING_BUFFER_SIZE - (r - w);
+        return RING_BUFFER_SAMPLES - (r - w);
     }
 }
 
-static void ring_buffer_write(const uint8_t *data, uint32_t len)
+static void ring_buffer_write_samples(const int16_t *samples, uint32_t sample_count)
 {
     k_mutex_lock(&ring_mutex, K_FOREVER);
     
-    for (uint32_t i = 0; i < len; i++) {
-        if (ring_buffer_available_space() > 0) {
-            ring_buffer[write_pos] = data[i];
-            write_pos = (write_pos + 1) % RING_BUFFER_SIZE;
+    for (uint32_t i = 0; i < sample_count; i++) {
+        if (ring_buffer_available_samples() > 0) {
+            ring_buffer[write_pos] = samples[i];
+            write_pos = (write_pos + 1) % RING_BUFFER_SAMPLES;
         } else {
-            /* Buffer full - drop oldest data by advancing read position */
-            read_pos = (read_pos + 1) % RING_BUFFER_SIZE;
-            ring_buffer[write_pos] = data[i];
-            write_pos = (write_pos + 1) % RING_BUFFER_SIZE;
+            /* Buffer full - drop oldest sample by advancing read position */
+            read_pos = (read_pos + 1) % RING_BUFFER_SAMPLES;
+            ring_buffer[write_pos] = samples[i];
+            write_pos = (write_pos + 1) % RING_BUFFER_SAMPLES;
         }
     }
     
     k_mutex_unlock(&ring_mutex);
 }
 
-static uint32_t ring_buffer_read(uint8_t *data, uint32_t len)
+static uint32_t ring_buffer_read_samples(int16_t *samples, uint32_t max_samples)
 {
     k_mutex_lock(&ring_mutex, K_FOREVER);
     
-    uint32_t available = ring_buffer_used_space();
-    uint32_t to_read = (len < available) ? len : available;
+    uint32_t available = ring_buffer_used_samples();
+    uint32_t to_read = (max_samples < available) ? max_samples : available;
     
     for (uint32_t i = 0; i < to_read; i++) {
-        data[i] = ring_buffer[read_pos];
-        read_pos = (read_pos + 1) % RING_BUFFER_SIZE;
+        samples[i] = ring_buffer[read_pos];
+        read_pos = (read_pos + 1) % RING_BUFFER_SAMPLES;
     }
     
     k_mutex_unlock(&ring_mutex);
@@ -182,20 +182,15 @@ static int init_dmic(void)
     struct pcm_stream_cfg stream = {
         .pcm_width = SAMPLE_BIT_WIDTH,
         .mem_slab  = &mem_slab,
-        .block_size = DMIC_BLOCK_SIZE,
-        .pcm_rate = MAX_SAMPLE_RATE,
     };
     
     struct dmic_cfg cfg = {
         .io = {
-            /* These fields can be used to limit the PDM clock
-             * configurations that the driver is allowed to use
-             * to those supported by the microphone.
-             */
-            .min_pdm_clk_freq = 1000000,
-            .max_pdm_clk_freq = 3500000,
-            .min_pdm_clk_dc   = 40,
-            .max_pdm_clk_dc   = 60,
+            /* Configure PDM for proper 16-bit PCM output - use valid nRF52840 frequencies */
+            .min_pdm_clk_freq = 1280000,  // 1.28 MHz (valid nRF52840 frequency)
+            .max_pdm_clk_freq = 1280000,  // Fixed frequency  
+            .min_pdm_clk_dc   = 50,       // 50% duty cycle
+            .max_pdm_clk_dc   = 50,       // Fixed duty cycle
         },
         .streams = &stream,
         .channel = {
@@ -203,9 +198,12 @@ static int init_dmic(void)
         },
     };
 
-    /* Configure for mono to simplify processing */
+    /* Configure for mono 16-bit PCM output */
     cfg.channel.req_num_chan = 1;
     cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
+    cfg.streams[0].pcm_rate = MAX_SAMPLE_RATE;
+    cfg.streams[0].block_size = DMIC_BLOCK_SIZE;
+    cfg.streams[0].pcm_width = SAMPLE_BIT_WIDTH;  // Explicitly set 16-bit
 
     LOG_INF("🎤 Configuring DMIC...");
     LOG_INF("PCM rate: %u Hz, channels: %u", cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
@@ -283,13 +281,13 @@ static void dmic_capture_thread(void *arg1, void *arg2, void *arg3)
         void *buffer;
         uint32_t size;
         
-        int ret = dmic_read(dmic_dev, 0, &buffer, &size, 100);  // Shorter timeout
+        int ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);  // Very short timeout
         if (ret < 0) {
             if (ret == -EAGAIN) {
-                k_msleep(5);  // Short wait when no data
+                k_yield();  // Just yield CPU, no delay
             } else {
                 LOG_ERR("❌ DMIC read failed: %d", ret);
-                k_msleep(50);
+                k_msleep(10);  // Minimal delay on real errors
             }
             
             if (!is_streaming_active() && dmic_started) {
@@ -298,15 +296,30 @@ static void dmic_capture_thread(void *arg1, void *arg2, void *arg3)
             continue;
         }
 
-        /* Write audio data to ring buffer */
+        /* Process and write audio data to ring buffer */
         if (is_streaming_active()) {
-            ring_buffer_write((uint8_t*)buffer, size);
+            /* Treat buffer as array of int16_t samples (CORRECT approach) */
+            int16_t *samples = (int16_t*)buffer;
+            uint32_t sample_count = size / sizeof(int16_t);
+            
+            /* Debug first DMIC block to see what we're getting */
+            if (block_counter == 0) {
+                LOG_INF("🔍 First DMIC block debug (int16_t samples):");
+                LOG_INF("   Buffer size: %u bytes", size);
+                LOG_INF("   Sample count: %u", sample_count);
+                for (uint32_t i = 0; i < 5 && i < sample_count; i++) {
+                    LOG_INF("   Sample[%u] = %d", i, samples[i]);
+                }
+            }
+            
+            /* Write int16_t samples directly to sample-based ring buffer */
+            ring_buffer_write_samples(samples, sample_count);
             
             /* Log stats every 100 blocks */
             if (block_counter % 100 == 0) {
-                uint32_t used = ring_buffer_used_space();
-                LOG_INF("🔄 Ring buffer: %u/%u bytes used (%u%%)", 
-                    used, RING_BUFFER_SIZE, (used * 100) / RING_BUFFER_SIZE);
+                uint32_t used = ring_buffer_used_samples();
+                LOG_INF("🔄 Ring buffer: %u/%u samples used (%u%%)", 
+                    used, RING_BUFFER_SAMPLES, (used * 100) / RING_BUFFER_SAMPLES);
             }
         }
 
@@ -329,7 +342,7 @@ static void ble_streaming_thread(void *arg1, void *arg2, void *arg3)
     ARG_UNUSED(arg2);
     ARG_UNUSED(arg3);
     
-    uint8_t chunk_buffer[CHUNK_SIZE];
+    int16_t sample_buffer[CHUNK_SAMPLES];
     uint32_t packet_counter = 0;
     
     LOG_INF("📡 BLE streaming thread started");
@@ -340,21 +353,29 @@ static void ble_streaming_thread(void *arg1, void *arg2, void *arg3)
             k_msleep(100);
         }
         
-        /* Read chunk from ring buffer */
-        uint32_t bytes_read = ring_buffer_read(chunk_buffer, CHUNK_SIZE);
+        /* Read samples from ring buffer */
+        uint32_t samples_read = ring_buffer_read_samples(sample_buffer, CHUNK_SAMPLES);
         
-        if (bytes_read > 0) {
-            /* Send via BLE */
-            int err = send_mic_audio_data(chunk_buffer, bytes_read);
+        if (samples_read > 0) {
+            /* Debug first few packets */
+            if (packet_counter < 3) {
+                LOG_INF("📦 BLE packet %u debug:", packet_counter);
+                for (uint32_t i = 0; i < 3 && i < samples_read; i++) {
+                    LOG_INF("   Sample[%u] = %d", i, sample_buffer[i]);
+                }
+            }
+            
+            /* Send int16_t samples via BLE (cast to uint8_t for transmission) */
+            int err = send_mic_audio_data((uint8_t*)sample_buffer, samples_read * sizeof(int16_t));
             if (err == 0) {
                 packet_counter++;
             }
             
-            /* Small delay to pace BLE transmissions */
-            k_msleep(10);  // 10ms between packets = ~100 packets/sec
+            /* No delay - stream as fast as possible */
+            // No delay at all for maximum throughput
         } else {
-            /* No data in ring buffer, wait a bit */
-            k_msleep(5);
+            /* No data in ring buffer, minimal wait */
+            k_yield();  // Just yield CPU, no time delay
         }
     }
 }
