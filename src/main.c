@@ -21,9 +21,10 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 /* Milliseconds to wait for a block to be read. */
 #define READ_TIMEOUT     1000
 
-/* Circular ring buffer for continuous audio streaming - INT16_T SAMPLES */
-#define RING_BUFFER_SAMPLES 16384  // 16K samples = 32KB
-#define CHUNK_SAMPLES 160          // 160 samples per BLE packet (320 bytes) - like omi
+/* Optimized ring buffer for 16kHz streaming */
+#define RING_BUFFER_SAMPLES 1024   // 1K samples = 2KB (2x512 bytes for peak load)
+#define CHUNK_SAMPLES 160          // 160 samples per packet (320 bytes) for 10ms at 16kHz
+#define BYTES_PER_PKT (CHUNK_SAMPLES * sizeof(int16_t))  // 320 bytes per packet
 
 static int16_t ring_buffer[RING_BUFFER_SAMPLES];
 static volatile uint32_t write_pos = 0;
@@ -125,8 +126,32 @@ static void connected(struct bt_conn *conn, uint8_t err)
     
     LOG_INF("🔗 CLIENT CONNECTED!");
     LOG_INF("📱 Device Address: %s", addr);
+    
+    /* Request 2Mbps PHY for high throughput */
+    int ret = bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
+    if (ret) {
+        LOG_WRN("⚠️ Failed to request 2M PHY: %d", ret);
+    } else {
+        LOG_INF("📡 Requested 2Mbps PHY for high throughput");
+    }
+    
+    /* Request tight connection interval for low latency */
+    struct bt_le_conn_param param = {
+        .interval_min = 6,   // 7.5ms
+        .interval_max = 8,   // 10ms  
+        .latency = 0,        // No latency
+        .timeout = 400,      // 4s timeout
+    };
+    
+    ret = bt_conn_le_param_update(conn, &param);
+    if (ret) {
+        LOG_WRN("⚠️ Failed to request connection params: %d", ret);
+    } else {
+        LOG_INF("⚡ Requested tight connection interval (7.5-10ms)");
+    }
+    
     LOG_INF("💡 Next step: Enable notifications on Audio Data characteristic");
-    LOG_INF("🎤 Real microphone audio will stream when notifications enabled");
+    LOG_INF("🎤 High-performance 16kHz audio streaming ready!");
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -335,17 +360,58 @@ static void dmic_capture_thread(void *arg1, void *arg2, void *arg3)
     }
 }
 
-/* BLE streaming thread - reads from ring buffer and sends via BLE */
+/* Audio timer for consistent 10ms packet timing */
+static struct k_work_delayable audio_timer_work;
+static uint32_t audio_packet_counter = 0;
+
+static void audio_timer_handler(struct k_work *work)
+{
+    if (!is_streaming_active()) {
+        return;
+    }
+    
+    /* Pull exactly 160 samples (320 bytes) from ring buffer */
+    int16_t sample_buffer[CHUNK_SAMPLES];
+    uint32_t samples_read = ring_buffer_read_samples(sample_buffer, CHUNK_SAMPLES);
+    
+    if (samples_read == CHUNK_SAMPLES) {
+        /* Send complete packet via BLE */
+        int err = send_mic_audio_data((uint8_t*)sample_buffer, BYTES_PER_PKT);
+        if (err == 0) {
+            audio_packet_counter++;
+            
+            /* Debug first few packets */
+            if (audio_packet_counter <= 3) {
+                LOG_INF("📦 Timer packet %u: %d samples, first sample = %d", 
+                    audio_packet_counter, samples_read, sample_buffer[0]);
+            }
+            
+            /* Log every 100 packets */
+            if (audio_packet_counter % 100 == 0) {
+                uint32_t buffer_used = ring_buffer_used_samples();
+                LOG_INF("📡 Sent %u packets, ring buffer: %u/%u samples", 
+                    audio_packet_counter, buffer_used, RING_BUFFER_SAMPLES);
+            }
+        }
+    } else if (samples_read > 0) {
+        LOG_WRN("⚠️ Partial packet: %u samples (need %u)", samples_read, CHUNK_SAMPLES);
+    }
+    
+    /* Schedule next packet in 10ms for 16kHz streaming */
+    k_work_schedule(&audio_timer_work, K_MSEC(10));
+}
+
+/* BLE streaming thread - now just manages the timer */
 static void ble_streaming_thread(void *arg1, void *arg2, void *arg3)
 {
     ARG_UNUSED(arg1);
     ARG_UNUSED(arg2);
     ARG_UNUSED(arg3);
     
-    int16_t sample_buffer[CHUNK_SAMPLES];
-    uint32_t packet_counter = 0;
-    
     LOG_INF("📡 BLE streaming thread started");
+    
+    /* Initialize audio timer */
+    k_work_init_delayable(&audio_timer_work, audio_timer_handler);
     
     while (1) {
         /* Wait for streaming to be enabled */
@@ -353,29 +419,20 @@ static void ble_streaming_thread(void *arg1, void *arg2, void *arg3)
             k_msleep(100);
         }
         
-        /* Read samples from ring buffer */
-        uint32_t samples_read = ring_buffer_read_samples(sample_buffer, CHUNK_SAMPLES);
+        /* Start audio timer for consistent 10ms packets */
+        if (!k_work_delayable_is_pending(&audio_timer_work)) {
+            LOG_INF("⏰ Starting 10ms audio timer for 16kHz streaming");
+            audio_packet_counter = 0;
+            k_work_schedule(&audio_timer_work, K_MSEC(10));
+        }
         
-        if (samples_read > 0) {
-            /* Debug first few packets */
-            if (packet_counter < 3) {
-                LOG_INF("📦 BLE packet %u debug:", packet_counter);
-                for (uint32_t i = 0; i < 3 && i < samples_read; i++) {
-                    LOG_INF("   Sample[%u] = %d", i, sample_buffer[i]);
-                }
-            }
-            
-            /* Send int16_t samples via BLE (cast to uint8_t for transmission) */
-            int err = send_mic_audio_data((uint8_t*)sample_buffer, samples_read * sizeof(int16_t));
-            if (err == 0) {
-                packet_counter++;
-            }
-            
-            /* No delay - stream as fast as possible */
-            // No delay at all for maximum throughput
-        } else {
-            /* No data in ring buffer, minimal wait */
-            k_yield();  // Just yield CPU, no time delay
+        /* Sleep while timer handles streaming */
+        k_msleep(1000);
+        
+        /* Stop timer if streaming stopped */
+        if (!is_streaming_active()) {
+            k_work_cancel_delayable(&audio_timer_work);
+            LOG_INF("⏰ Audio timer stopped");
         }
     }
 }
