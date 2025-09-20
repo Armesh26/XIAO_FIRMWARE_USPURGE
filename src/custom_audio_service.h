@@ -22,9 +22,9 @@
 /* Function declarations */
 int custom_audio_service_init(void);
 int audio_data_send(const uint8_t *data, uint16_t len);
-void start_sine_wave_streaming(void);
-void stop_sine_wave_streaming(void);
-void enable_microphone_streaming(void);
-void disable_microphone_streaming(void);
+int send_mic_audio_data(const uint8_t *data, uint16_t len);
+void start_mic_streaming(void);
+void stop_mic_streaming(void);
+bool is_streaming_active(void);
 
 #endif /* CUSTOM_AUDIO_SERVICE_H */
