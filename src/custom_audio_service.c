@@ -35,6 +35,10 @@ static ssize_t data_write_cb(struct bt_conn *conn,
     return len;
 }
 
+/* External function to enable microphone streaming */
+extern void enable_microphone_streaming(void);
+extern void disable_microphone_streaming(void);
+
 /* CCC changed callback */
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
@@ -44,15 +48,15 @@ static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
     LOG_INF("Value: 0x%04x (%s)", value, notify_enabled ? "ENABLED" : "DISABLED");
     
     if (notify_enabled) {
-        LOG_INF("🎵 STARTING AUDIO STREAMING!");
-        LOG_INF("📊 Frequency: 440Hz (A4 note)");
-        LOG_INF("📈 Sample Rate: 8kHz");
-        LOG_INF("📦 Samples per packet: 10");
-        LOG_INF("⏱️  Packet interval: 10ms");
-        start_sine_wave_streaming();
+        LOG_INF("🎤 STARTING MICROPHONE STREAMING!");
+        LOG_INF("📊 Source: Real microphone audio");
+        LOG_INF("📈 Sample Rate: 16kHz Stereo");
+        LOG_INF("📦 Format: 16-bit PCM");
+        LOG_INF("⏱️  Real-time streaming via BLE");
+        enable_microphone_streaming();
     } else {
-        LOG_INF("🔇 STOPPING AUDIO STREAMING");
-        stop_sine_wave_streaming();
+        LOG_INF("🔇 STOPPING MICROPHONE STREAMING");
+        disable_microphone_streaming();
     }
 }
 
