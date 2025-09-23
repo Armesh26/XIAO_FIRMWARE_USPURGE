@@ -3,4 +3,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(LastAttempt)
 
-target_sources(app PRIVATE src/main.c src/custom_audio_service.c)
+target_sources(app PRIVATE src/main.c src/custom_audio_service.c src/led.c)

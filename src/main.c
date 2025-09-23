@@ -12,6 +12,7 @@
 #include <zephyr/logging/log.h>
 #include <math.h>
 #include "custom_audio_service.h"
+#include "led.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -127,6 +128,9 @@ static void connected(struct bt_conn *conn, uint8_t err)
     LOG_INF("🔗 CLIENT CONNECTED!");
     LOG_INF("📱 Device Address: %s", addr);
     
+    /* Turn on LED to indicate connection */
+    led_set_connected(true);
+    
     /* Request 2Mbps PHY for high throughput */
     int ret = bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
     if (ret) {
@@ -161,6 +165,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("📱 CLIENT DISCONNECTED");
     LOG_INF("Device: %s (reason: 0x%02x)", addr, reason);
+    
+    /* Turn off LED to indicate disconnection */
+    led_set_connected(false);
     
     /* Stop streaming when disconnected */
     stop_mic_streaming();
@@ -488,6 +495,15 @@ int main(void)
     }
     
     LOG_INF("✅ Custom audio service initialized");
+    
+    /* Initialize LED */
+    LOG_INF("Initializing LED...");
+    err = led_init();
+    if (err) {
+        LOG_ERR("❌ LED init failed (err %d)", err);
+        return err;
+    }
+    LOG_INF("✅ LED initialized successfully");
     
     /* Initialize ring buffer mutex */
     k_mutex_init(&ring_mutex);

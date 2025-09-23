@@ -6,6 +6,18 @@
 	msm261d3526hicpm-c-en {
 		regulator-boot-on;
 	};
+	
+	aliases {
+		led0 = &led0;
+	};
+	
+	leds {
+		compatible = "gpio-leds";
+		led0: led_0 {
+			gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
+			label = "Built-in LED";
+		};
+	};
 };
 
 dmic_dev: &pdm0 {
