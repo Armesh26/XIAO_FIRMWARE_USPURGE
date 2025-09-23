@@ -25,18 +25,18 @@ class FullDurationRecorder:
         self.start_time = None
         
     async def connect(self):
-        """Find and connect to AudioStreamer"""
-        print("🔍 Scanning for AudioStreamer...")
+        """Find and connect to MicStreamer"""
+        print("🔍 Scanning for MicStreamer...")
         devices = await BleakScanner.discover(timeout=5)
         
         for device in devices:
-            if device.name and ("AudioStreamer" in device.name):
+            if device.name and ("MicStreamer" in device.name or "AudioStreamer" in device.name or "Xiao Audio Controller" in device.name):
                 print(f"✅ Found: {device.name}")
                 self.device_address = device.address
                 break
         
         if not self.device_address:
-            print("❌ AudioStreamer not found")
+            print("❌ Audio device not found")
             return False
         
         self.client = BleakClient(self.device_address)
