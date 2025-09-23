@@ -1,158 +1,221 @@
-# Xiao nRF52840 Sense BLE Audio Streaming Firmware
+# 🎤 XIAO Audio Transcriber
 
-Custom Bluetooth Low Energy audio streaming firmware for the Seeed Studio Xiao nRF52840 Sense board, streaming a 440Hz sine wave over BLE using Nordic Connect SDK.
+A complete BLE audio streaming and transcription system using the **Seeed Studio XIAO nRF52840 Sense** board with real-time speech-to-text capabilities.
 
-## 🎵 Features
+## 🌟 Features
 
-- **Custom BLE Audio Service** - Streams audio data via GATT characteristic notifications
-- **440Hz Sine Wave Generation** - Pure A4 note generated using integer-based lookup table
-- **Real-time Streaming** - 8kHz sample rate, 10 samples per packet, 20ms intervals
-- **Comprehensive Debugging** - Detailed serial output for monitoring and troubleshooting
-- **Optimized for Xiao nRF52840** - Memory and performance optimized for the hardware
-- **Fixed BLE Connection Issues** - Proper advertising and scan response handling
+### 🔧 Firmware (XIAO Board)
+- **Real-time Audio Capture** - 16kHz microphone streaming via BLE
+- **Custom BLE Audio Service** - Optimized for continuous audio streaming
+- **Professional Audio Quality** - 16-bit PCM, mono channel
+- **Continuous Streaming** - 160 samples per packet, 10ms intervals
+- **Comprehensive Debugging** - Detailed serial output and monitoring
+
+### 📱 React Web App
+- **BLE Audio Recording** - Capture audio directly from XIAO board
+- **Live Transcription** - Real-time speech-to-text using Deepgram
+- **Audio Playback** - Play recorded audio with proper audio context
+- **Modern UI** - Beautiful, responsive interface with real-time status
+- **Cross-platform** - Works on desktop and mobile browsers
 
 ## 🛠 Hardware Requirements
 
-- **Seeed Studio Xiao nRF52840 Sense** board
+- **Seeed Studio XIAO nRF52840 Sense** board
 - USB-C cable for programming and power
-- Mobile device with **nRF Connect** app for testing
+- Computer with Bluetooth capability
+- Web browser with Web Bluetooth support (Chrome/Edge recommended)
 
 ## 📋 Software Requirements
 
+### For Firmware Development
 - **Nordic Connect SDK v3.1.1** or compatible
 - **nRF Command Line Tools**
 - **VS Code with nRF Connect extension** (recommended)
 
+### For React App
+- **Node.js** (v14 or higher)
+- **npm** package manager
+- **Modern web browser** with Web Bluetooth support
+
 ## 🏗 Project Structure
 
 ```
-├── src/
-│   ├── main.c                    # Main application and BLE setup
-│   ├── custom_audio_service.c    # Audio streaming service implementation
-│   └── custom_audio_service.h    # Service header and definitions
-├── CMakeLists.txt               # Build configuration
-├── prj.conf                     # Project configuration
-└── README.md                    # This file
+├── src/                              # Firmware source code
+│   ├── main.c                        # Main application and BLE setup
+│   ├── custom_audio_service.c        # Audio streaming service
+│   └── custom_audio_service.h        # Service definitions
+├── reactapp/                         # React web application
+│   ├── src/
+│   │   ├── App.js                    # Main React component
+│   │   └── components/
+│   │       ├── BLEConnection.js      # BLE connection management
+│   │       ├── AudioRecorder.js      # Audio recording functionality
+│   │       └── DeepgramTranscriber.js # Speech-to-text integration
+│   ├── public/
+│   ├── package.json                  # Dependencies
+│   └── README.md                     # React app documentation
+├── CMakeLists.txt                    # Firmware build configuration
+├── prj.conf                          # Project configuration
+└── README.md                         # This file
 ```
 
-## 🔧 Building and Flashing
+## 🚀 Quick Start
 
-### Build the Firmware
+### 1. Build and Flash Firmware
+
 ```bash
+# Build the firmware
 west build -b xiao_ble/nrf52840/sense
+
+# Flash via UF2 bootloader
+# 1. Double-click reset button on XIAO board
+# 2. Copy build/zephyr/zephyr.uf2 to XIAO-SENSE drive
 ```
 
-### Flash via UF2 Bootloader
-1. **Double-click reset button** on Xiao board to enter bootloader mode
-2. Board appears as **XIAO-SENSE** USB drive
-3. **Copy the UF2 file**:
-   ```bash
-   cp build/zephyr/zephyr.uf2 /Volumes/XIAO-SENSE/
-   ```
-4. Board automatically reboots and runs the firmware
+### 2. Start React App
 
-## 📱 Testing with nRF Connect App
+```bash
+# Navigate to React app directory
+cd reactapp
 
-1. **Install nRF Connect for Mobile** on your smartphone
-2. **Scan for devices** - look for "AudioStreamer"
-3. **Connect** to the device
-4. **Find Custom Audio Service** (UUID: `12345678-1234-5678-1234-567812345678`)
-5. **Locate Audio Data Characteristic** (UUID: `12345679-1234-5678-1234-567812345678`)
-6. **Enable notifications** - audio streaming starts automatically
-7. **Monitor audio data** - 16-bit signed PCM samples at 8kHz
+# Install dependencies
+npm install
 
-## 🐛 Serial Debugging
+# Start development server
+npm start
+```
 
-Connect to serial output at **115200 baud**:
+### 3. Use the Application
+
+1. **Open browser** to `http://localhost:3000`
+2. **Connect to XIAO board** - Click "Connect to XIAO Board"
+3. **Start Recording** - Click "Start Recording" and speak into XIAO
+4. **Live Transcription** - Click "Start Transcription" for real-time speech-to-text
+5. **Playback** - Play recorded audio or download as WAV file
+
+## 🔧 Technical Details
+
+### Firmware Specifications
+- **Audio Format**: 16-bit PCM, 16kHz sample rate, mono
+- **BLE Streaming**: 160 samples per packet (320 bytes), 10ms intervals
+- **Device Name**: "MicStreamer"
+- **Service UUID**: `12345678-1234-5678-1234-567812345678`
+- **Characteristic UUID**: `12345679-1234-5678-1234-567812345678`
+
+### React App Features
+- **Web Bluetooth API** - Direct BLE communication
+- **Audio Context** - Professional audio processing
+- **Deepgram Integration** - Live speech-to-text transcription
+- **Real-time Status** - Stream monitoring and packet counting
+- **Cross-browser Support** - Works on Chrome, Edge, and other modern browsers
+
+## 🎵 Audio Flow
+
+```
+XIAO Microphone → BLE Stream → React App → Deepgram API → Live Transcription
+                ↓
+            Audio Recording → WAV File → Playback/Download
+```
+
+## 📱 Browser Compatibility
+
+| Browser | Web Bluetooth | Audio Context | Status |
+|---------|---------------|---------------|---------|
+| Chrome  | ✅ Yes        | ✅ Yes        | ✅ Full Support |
+| Edge    | ✅ Yes        | ✅ Yes        | ✅ Full Support |
+| Safari  | ❌ No         | ✅ Yes        | ⚠️ Limited (No BLE) |
+| Firefox | ❌ No         | ✅ Yes        | ⚠️ Limited (No BLE) |
+
+## 🔍 Debugging
+
+### Serial Output (Firmware)
+Connect to serial at **115200 baud**:
 ```bash
 screen /dev/cu.usbmodem1101 115200
 ```
 
+### Browser Console (React App)
+- **F12** → Console tab
+- Look for BLE connection logs
+- Monitor audio packet reception
+- Check transcription status
+
 ### Expected Output
 ```
-=== AUDIO STREAMER STARTING ===
-Board: Xiao nRF52840 Sense
-Firmware: Custom Audio Streaming with 440Hz Sine Wave
-Sample Rate: 8kHz, Samples per packet: 10
-✅ Bluetooth initialized successfully
-✅ Custom audio service initialized
-✅ Advertising started successfully
-=== READY FOR CONNECTIONS ===
-```
-
-When a client connects and enables notifications:
-```
-🔗 CLIENT CONNECTED!
-📱 Device Address: XX:XX:XX:XX:XX:XX
-🔔 NOTIFICATION STATUS CHANGED
-🎵 STARTING AUDIO STREAMING!
-📦 Sent 100 audio packets (errors: 0)
+🎤 XIAO MIC (BLE): received 160 samples
+🎵 Transcribing XIAO MIC: sent 160 samples to Deepgram
+📝 Deepgram transcript received: "Hello world"
 ```
 
 ## ⚙️ Configuration
 
+### Deepgram API Key
+Update the API key in `reactapp/src/components/DeepgramTranscriber.js`:
+```javascript
+const DEEPGRAM_API_KEY = 'your-api-key-here';
+```
+
 ### Audio Parameters
-- **Frequency**: 440Hz (A4 note)
-- **Sample Rate**: 8kHz
-- **Amplitude**: 16383 (reduced for stability)
-- **Samples per Packet**: 10
-- **Packet Interval**: 20ms
-
-### BLE Configuration
-- **Device Name**: "AudioStreamer"
-- **MTU Size**: 65 bytes
-- **Connection Interval**: 100-150ms
-- **Data Length**: 27 bytes (hardware limit)
-
-## 🔧 Technical Implementation
-
-### Sine Wave Generation
-- **Integer-based lookup table** (16 entries) for performance
-- **Phase accumulator** instead of floating-point math
-- **No FPU dependency** - runs on any ARM Cortex-M4
-
-### BLE Service Structure
-- **Primary Service**: Custom Audio Service
-- **Characteristic**: Audio Data with notify and write properties
-- **CCC Descriptor**: Client Characteristic Configuration for notifications
-
-### Memory Usage
-- **Flash**: ~186KB (23% of 788KB)
-- **RAM**: ~47KB (18% of 256KB)
-- **Stack Sizes**: Main 4KB, System Work Queue 4KB, BT RX 2KB
+- **Sample Rate**: 16kHz (matches firmware)
+- **Channels**: 1 (mono)
+- **Bit Depth**: 16-bit
+- **Encoding**: linear16 (for Deepgram)
 
 ## 🚨 Troubleshooting
 
-### Connection Issues
-- Ensure proper BLE advertising parameters
-- Check scan response data format
-- Verify client has location permissions (Android)
+### BLE Connection Issues
+- Ensure XIAO board is powered and running firmware
+- Check browser has Bluetooth permissions
+- Try refreshing the page and reconnecting
+- Verify "MicStreamer" appears in device list
 
-### Audio Streaming Issues
-- Monitor packet success rate in serial output
-- Check MTU size compatibility
-- Verify notification enable sequence
+### Audio Issues
+- Check serial output for streaming status
+- Verify audio stream is active in React app
+- Ensure XIAO microphone is not blocked
+- Test with different audio levels
 
-### Build Issues
-- Ensure Nordic Connect SDK v3.1.1+ is installed
-- Check board target: `xiao_ble/nrf52840/sense`
-- Verify all dependencies are available
+### Transcription Issues
+- Verify Deepgram API key is correct
+- Check network connection
+- Monitor browser console for errors
+- Ensure audio packets are being sent to Deepgram
 
-## 📚 References
+## 📚 API Reference
 
-- [Nordic Connect SDK Documentation](https://developer.nordicsemi.com/nRF_Connect_SDK/)
-- [Seeed Studio Xiao nRF52840 Sense](https://wiki.seeedstudio.com/XIAO_BLE/)
-- [nRF Connect for Mobile](https://www.nordicsemi.com/Products/Development-tools/nrf-connect-for-mobile)
+### BLE Service
+- **Service UUID**: `12345678-1234-5678-1234-567812345678`
+- **Audio Data Characteristic**: `12345679-1234-5678-1234-567812345678`
+- **Properties**: Notify, Write
+
+### Deepgram Configuration
+- **Model**: nova-3 (latest)
+- **Language**: en-US
+- **Format**: linear16
+- **Sample Rate**: 16000 Hz
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ## 📄 License
 
 This project is open source. Feel free to modify and distribute according to your needs.
 
-## 🤝 Contributing
+## 🙏 Acknowledgments
 
-Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+- **Seeed Studio** for the excellent XIAO nRF52840 Sense board
+- **Nordic Semiconductor** for the nRF Connect SDK
+- **Deepgram** for the speech-to-text API
+- **React** and **Web Bluetooth** communities
 
 ---
 
-**Created for Xiao nRF52840 Sense BLE Audio Streaming**  
-*Real-time 440Hz sine wave streaming over Bluetooth Low Energy*
+**🎤 XIAO Audio Transcriber**  
+*Real-time BLE audio streaming with live speech-to-text transcription*
+
+Built with ❤️ for the XIAO nRF52840 Sense community
