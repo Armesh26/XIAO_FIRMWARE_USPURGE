@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import styled from 'styled-components';
 import { Mic, Square, Play, Pause, Download } from 'lucide-react';
+import { audioProcessor } from '../utils/AudioProcessor';
 
 const Container = styled.div`
   background: rgba(255, 255, 255, 0.95);
@@ -22,14 +23,14 @@ const Title = styled.h2`
 
 const Button = styled.button`
   background: ${props => {
-    if (props.recording) return '#e74c3c';
-    if (props.playing) return '#f39c12';
+    if (props.active) return '#e74c3c';
+    if (props.secondary) return '#6c757d';
     return '#667eea';
   }};
   color: white;
   border: none;
   border-radius: 12px;
-  padding: 1rem 2rem;
+  padding: 1rem 1.5rem;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
@@ -38,13 +39,11 @@ const Button = styled.button`
   align-items: center;
   gap: 0.5rem;
   margin: 0.5rem;
-  min-width: 140px;
-  justify-content: center;
 
   &:hover {
     background: ${props => {
-      if (props.recording) return '#c0392b';
-      if (props.playing) return '#e67e22';
+      if (props.active) return '#c0392b';
+      if (props.secondary) return '#5a6268';
       return '#5a67d8';
     }};
     transform: translateY(-2px);
@@ -76,300 +75,226 @@ const Status = styled.div`
   border-radius: 12px;
   background: ${props => {
     if (props.recording) return '#fdf2f2';
-    if (props.playing) return '#fef9e7';
+    if (props.error) return '#fdf2f2';
     return '#f8f9fa';
   }};
   color: ${props => {
     if (props.recording) return '#e74c3c';
-    if (props.playing) return '#f39c12';
+    if (props.error) return '#e74c3c';
     return '#666';
   }};
   font-weight: 500;
   justify-content: center;
 `;
 
-const Timer = styled.div`
-  font-size: 2rem;
-  font-weight: bold;
-  text-align: center;
-  margin: 1rem 0;
-  color: #333;
-`;
-
-const AudioInfo = styled.div`
-  margin-top: 1rem;
-  padding: 1rem;
+const InfoBox = styled.div`
   background: #f8f9fa;
   border-radius: 12px;
-  font-family: monospace;
+  padding: 1rem;
+  margin: 1rem 0;
   font-size: 0.9rem;
+  color: #666;
 `;
 
-const AudioRecorder = ({ isConnected, onAudioData, onRecordingComplete, onAudioHandlerRegister }) => {
+const Stats = styled.div`
+  font-size: 0.9rem;
+  color: #666;
+  font-family: monospace;
+  text-align: center;
+  margin: 1rem 0;
+`;
+
+const AudioRecorder = ({ isConnected, onRecordingComplete, device }) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [recordedAudio, setRecordedAudio] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordedAudio, setRecordedAudio] = useState(null);
   const [audioData, setAudioData] = useState([]);
-  const [audioStreamActive, setAudioStreamActive] = useState(false);
   const [packetCount, setPacketCount] = useState(0);
-  
+  const [error, setError] = useState(null);
+
   const audioBufferRef = useRef([]);
-  const startTimeRef = useRef(null);
-  const timerRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const sourceRef = useRef(null);
-  const audioHandlerRef = useRef(null);
   const isRecordingRef = useRef(false);
+  const startTimeRef = useRef(null);
+  const durationIntervalRef = useRef(null);
   const packetCountRef = useRef(0);
 
-  // Audio configuration (matching auto_pitch_recorder.py)
-  const SAMPLE_RATE = 16000;
-  const CHANNELS = 1;
-  const SAMPLE_WIDTH = 2;
-
+  // Handle audio data from BLE
   useEffect(() => {
-    if (isRecording) {
-      startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        const elapsed = (Date.now() - startTimeRef.current) / 1000;
-        setRecordingDuration(elapsed);
-      }, 100);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+    const handleAudioData = (data, audioStream) => {
+      console.log(`🎵 AudioRecorder received: ${data.length} samples`);
+      
+      // Update packet count
+      packetCountRef.current += 1;
+      if (packetCountRef.current % 10 === 0) {
+        setPacketCount(packetCountRef.current);
       }
-    }
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+      // Store audio data if recording
+      if (isRecordingRef.current) {
+        const samples = Array.from(data);
+        audioBufferRef.current.push(...samples);
+        
+        console.log(`📝 Recording: captured ${samples.length} samples, total: ${audioBufferRef.current.length}`);
       }
-    };
-  }, [isRecording]);
 
-  const createAudioBlob = useCallback((audioData) => {
-    // Create WAV file from audio data
-    const buffer = new ArrayBuffer(44 + audioData.length * 2);
-    const view = new DataView(buffer);
-    
-    // WAV header
-    const writeString = (offset, string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
+      // Don't call onAudioData here - this creates infinite recursion
+      // The AudioRecorder only needs to capture data for recording purposes
     };
-    
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + audioData.length * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, CHANNELS, true);
-    view.setUint32(24, SAMPLE_RATE, true);
-    view.setUint32(28, SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH, true);
-    view.setUint16(32, CHANNELS * SAMPLE_WIDTH, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, audioData.length * 2, true);
-    
-    // Write audio data
-    let offset = 44;
-    for (let i = 0; i < audioData.length; i++) {
-      view.setInt16(offset, audioData[i], true);
-      offset += 2;
-    }
-    
-    return new Blob([buffer], { type: 'audio/wav' });
+
+    // This will be called by the parent component
+    window.audioRecorderHandler = handleAudioData;
   }, []);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
     if (!isConnected) {
       alert('Please connect to XIAO board first');
       return;
     }
 
-    setIsRecording(true);
-    isRecordingRef.current = true;
-    setAudioData([]);
-    audioBufferRef.current = [];
-    setRecordingDuration(0);
-    startTimeRef.current = Date.now();
-    console.log('Started recording...');
+    try {
+      console.log('🎤 Starting recording...');
+      
+      setIsRecording(true);
+      isRecordingRef.current = true;
+      setAudioData([]);
+      audioBufferRef.current = [];
+      setRecordingDuration(0);
+      setPacketCount(0);
+      packetCountRef.current = 0;
+      startTimeRef.current = Date.now();
+      setError(null);
+
+      // Start duration timer
+      durationIntervalRef.current = setInterval(() => {
+        if (startTimeRef.current) {
+          setRecordingDuration((Date.now() - startTimeRef.current) / 1000);
+        }
+      }, 100);
+
+      console.log('✅ Recording started');
+    } catch (error) {
+      console.error('❌ Failed to start recording:', error);
+      setError('Failed to start recording: ' + error.message);
+      setIsRecording(false);
+      isRecordingRef.current = false;
+    }
   }, [isConnected]);
 
-  const stopRecording = useCallback(() => {
-    setIsRecording(false);
-    isRecordingRef.current = false;
-    
-    if (audioBufferRef.current.length > 0) {
-      // Convert audio data to Int16Array
-      const audioArray = new Int16Array(audioBufferRef.current);
-      setAudioData(audioArray);
+  const stopRecording = useCallback(async () => {
+    try {
+      setIsRecording(false);
+      isRecordingRef.current = false;
       
-      // Create audio blob for playback
-      const audioBlob = createAudioBlob(audioArray);
-      setRecordedAudio(audioBlob);
-      
-      // Notify parent component
-      if (onRecordingComplete) {
-        onRecordingComplete(audioArray);
+      // Clear duration timer
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
       }
-      
-      console.log(`Recording stopped. Captured ${audioArray.length} samples`);
-    }
-  }, [onRecordingComplete, createAudioBlob]);
 
-  const playRecording = useCallback(async () => {
+      console.log(`🛑 Stopping recording. Buffer length: ${audioBufferRef.current.length}`);
+      
+      if (audioBufferRef.current.length > 0) {
+        // Convert to Int16Array
+        const audioArray = new Int16Array(audioBufferRef.current);
+        setAudioData(audioArray);
+        
+        // Create WAV blob
+        const audioBlob = audioProcessor.createWavBlob(audioArray, recordingDuration);
+        setRecordedAudio(audioBlob);
+        
+        // Validate audio quality
+        const quality = audioProcessor.validateAudioData(audioArray);
+        console.log('🎵 Audio Quality:', quality);
+        
+        // Notify parent component
+        if (onRecordingComplete) {
+          onRecordingComplete(audioArray);
+        }
+        
+        console.log(`✅ Recording completed: ${audioArray.length} samples, ${recordingDuration.toFixed(1)}s`);
+      } else {
+        console.log('⚠️ No audio data captured during recording');
+        setError('No audio data captured during recording');
+      }
+    } catch (error) {
+      console.error('❌ Failed to stop recording:', error);
+      setError('Failed to stop recording: ' + error.message);
+    }
+  }, [recordingDuration, onRecordingComplete]);
+
+  const playRecording = useCallback(() => {
     if (!recordedAudio) return;
 
     try {
-      setIsPlaying(true);
+      const audioUrl = URL.createObjectURL(recordedAudio);
+      const audio = new Audio(audioUrl);
       
-      // Close existing audio context if any
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        await audioContextRef.current.close();
-      }
-      
-      // Create new audio context
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      
-      // Resume audio context if suspended (required for user interaction)
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      
-      // Get audio data from blob
-      const arrayBuffer = await recordedAudio.arrayBuffer();
-      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-      
-      // Create and configure audio source
-      sourceRef.current = audioContextRef.current.createBufferSource();
-      sourceRef.current.buffer = audioBuffer;
-      sourceRef.current.connect(audioContextRef.current.destination);
-      
-      // Handle playback end
-      sourceRef.current.onended = () => {
-        setIsPlaying(false);
-        sourceRef.current = null;
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
       };
       
-      // Start playback
-      sourceRef.current.start();
-      console.log('Playback started');
-      
+      audio.play();
+      console.log('▶️ Playing recorded audio');
     } catch (error) {
-      console.error('Playback error:', error);
-      setIsPlaying(false);
-      alert('Playback failed: ' + error.message);
+      console.error('❌ Failed to play recording:', error);
+      setError('Failed to play recording: ' + error.message);
     }
   }, [recordedAudio]);
-
-  const pauseRecording = useCallback(() => {
-    if (sourceRef.current) {
-      try {
-        sourceRef.current.stop();
-        sourceRef.current = null;
-        setIsPlaying(false);
-        console.log('Playback stopped');
-      } catch (error) {
-        console.error('Error stopping playback:', error);
-        setIsPlaying(false);
-      }
-    }
-  }, []);
 
   const downloadRecording = useCallback(() => {
     if (!recordedAudio) return;
 
-    const url = URL.createObjectURL(recordedAudio);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `xiao_recording_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const url = URL.createObjectURL(recordedAudio);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `xiao_recording_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log('⬇️ Recording downloaded');
+    } catch (error) {
+      console.error('❌ Failed to download recording:', error);
+      setError('Failed to download recording: ' + error.message);
+    }
   }, [recordedAudio]);
 
-  // Handle incoming audio data from BLE (continuous stream)
-  useEffect(() => {
-    const handleAudioData = (data, audioStream) => {
-      // Track that audio stream is active
-      setAudioStreamActive(true);
-      packetCountRef.current += 1;
-      
-      // Update packet count every 10 packets
-      if (packetCountRef.current % 10 === 0) {
-        setPacketCount(packetCountRef.current);
-      }
-      
-      // Always capture audio data when recording is active
-      // The firmware sends 160 samples every 10ms continuously
-      if (isRecordingRef.current) {
-        // Convert Int16Array to regular array for storage
-        const samples = Array.from(data);
-        audioBufferRef.current.push(...samples);
-        
-        // Log every 100 packets to avoid spam
-        if (audioBufferRef.current.length % 16000 === 0) {
-          console.log(`Recording: ${audioBufferRef.current.length} samples captured`);
-        }
-      }
-    };
-    
-    audioHandlerRef.current = handleAudioData;
-    
-    // Register the handler with the parent component
-    if (onAudioHandlerRegister) {
-      onAudioHandlerRegister(handleAudioData);
-    }
-  }, [onAudioHandlerRegister]);
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
-  const formatTime = (seconds) => {
+  const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
     <Container>
       <Title>🎤 Audio Recorder</Title>
       
-      <Status recording={isRecording} playing={isPlaying}>
-        {isRecording && (
+      <Status recording={isRecording} error={error}>
+        {error && (
           <>
             <Mic size={20} />
-            Recording from XIAO MIC (BLE)... ({audioStreamActive ? 'Stream Active' : 'No Stream'})
+            Error: {error}
           </>
         )}
-        {isPlaying && (
-          <>
-            <Play size={20} />
-            Playing Recording
-          </>
-        )}
-        {!isRecording && !isPlaying && audioData.length === 0 && (
+        {isRecording && !error && (
           <>
             <Mic size={20} />
-            {audioStreamActive ? `Audio Stream Active (${packetCount} packets)` : 'Ready to Record'}
+            Recording XIAO Audio... {formatDuration(recordingDuration)}
           </>
         )}
-        {!isRecording && !isPlaying && audioData.length > 0 && (
+        {!isRecording && !error && (
           <>
             <Square size={20} />
-            Recording Complete ({audioStreamActive ? 'Stream Active' : 'No Stream'})
+            Ready to Record
           </>
         )}
       </Status>
-
-      {isRecording && (
-        <Timer>
-          {formatTime(recordingDuration)}
-        </Timer>
-      )}
 
       <ButtonGroup>
         {!isRecording ? (
@@ -378,49 +303,54 @@ const AudioRecorder = ({ isConnected, onAudioData, onRecordingComplete, onAudioH
             Start Recording
           </Button>
         ) : (
-          <Button onClick={stopRecording} recording>
+          <Button onClick={stopRecording} active>
             <Square size={20} />
             Stop Recording
           </Button>
         )}
-
+        
         {recordedAudio && (
           <>
-            {!isPlaying ? (
-              <Button onClick={playRecording}>
-                <Play size={20} />
-                Play
-              </Button>
-            ) : (
-              <Button onClick={pauseRecording} playing>
-                <Pause size={20} />
-                Pause
-              </Button>
-            )}
+            <Button onClick={playRecording} secondary>
+              <Play size={20} />
+              Play
+            </Button>
             
-            <Button onClick={downloadRecording}>
+            <Button onClick={downloadRecording} secondary>
               <Download size={20} />
               Download
             </Button>
           </>
         )}
+        
+        {error && (
+          <Button onClick={clearError} secondary>
+            Clear Error
+          </Button>
+        )}
       </ButtonGroup>
 
-      <AudioInfo>
-        <strong>Audio Stream Info:</strong><br />
-        Stream Active: {audioStreamActive ? 'Yes' : 'No'}<br />
-        Packets Received: {packetCount.toLocaleString()}<br />
-        {audioData.length > 0 && (
-          <>
-            <br /><strong>Recording Info:</strong><br />
-            Duration: {formatTime(recordingDuration)}<br />
-            Samples: {audioData.length.toLocaleString()}<br />
-            Sample Rate: {SAMPLE_RATE} Hz<br />
-            Channels: {CHANNELS}<br />
-            Size: {(audioData.length * 2 / 1024).toFixed(1)} KB
-          </>
-        )}
-      </AudioInfo>
+      <Stats>
+        Audio Packets: {packetCount} | 
+        {audioData.length > 0 && `Samples: ${audioData.length.toLocaleString()}`} | 
+        {recordingDuration > 0 && `Duration: ${formatDuration(recordingDuration)}`}
+      </Stats>
+
+      {device && (
+        <InfoBox>
+          <strong>Connected Device:</strong><br/>
+          Name: {device.name || 'Unknown'}<br/>
+          ID: {device.id || 'Unknown'}<br/>
+          Status: Connected ✅
+        </InfoBox>
+      )}
+
+      {!isConnected && (
+        <InfoBox>
+          <strong>Connection Required:</strong><br/>
+          Please connect to your XIAO board first to start recording audio.
+        </InfoBox>
+      )}
     </Container>
   );
 };

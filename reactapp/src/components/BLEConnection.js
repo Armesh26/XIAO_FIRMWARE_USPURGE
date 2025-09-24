@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import styled from 'styled-components';
-import { Bluetooth, BluetoothConnected, Wifi, WifiOff } from 'lucide-react';
+import { Bluetooth, BluetoothOff, Wifi, WifiOff } from 'lucide-react';
 
 const Container = styled.div`
   background: rgba(255, 255, 255, 0.95);
@@ -21,11 +21,15 @@ const Title = styled.h2`
 `;
 
 const Button = styled.button`
-  background: ${props => props.connected ? '#4CAF50' : '#667eea'};
+  background: ${props => {
+    if (props.active) return '#e74c3c';
+    if (props.secondary) return '#6c757d';
+    return '#667eea';
+  }};
   color: white;
   border: none;
   border-radius: 12px;
-  padding: 1rem 2rem;
+  padding: 1rem 1.5rem;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
@@ -33,12 +37,14 @@ const Button = styled.button`
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0.5rem auto;
-  min-width: 200px;
-  justify-content: center;
+  margin: 0.5rem;
 
   &:hover {
-    background: ${props => props.connected ? '#45a049' : '#5a67d8'};
+    background: ${props => {
+      if (props.active) return '#c0392b';
+      if (props.secondary) return '#5a6268';
+      return '#5a67d8';
+    }};
     transform: translateY(-2px);
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
   }
@@ -58,221 +64,278 @@ const Status = styled.div`
   margin: 1rem 0;
   padding: 1rem;
   border-radius: 12px;
-  background: ${props => props.connected ? '#e8f5e8' : '#f8f9fa'};
-  color: ${props => props.connected ? '#2e7d32' : '#666'};
+  background: ${props => {
+    if (props.connected) return '#d4edda';
+    if (props.error) return '#f8d7da';
+    return '#f8f9fa';
+  }};
+  color: ${props => {
+    if (props.connected) return '#155724';
+    if (props.error) return '#721c24';
+    return '#666';
+  }};
   font-weight: 500;
+  justify-content: center;
 `;
 
-const DeviceInfo = styled.div`
-  margin-top: 1rem;
-  padding: 1rem;
+const InfoBox = styled.div`
   background: #f8f9fa;
   border-radius: 12px;
-  font-family: monospace;
+  padding: 1rem;
+  margin: 1rem 0;
   font-size: 0.9rem;
+  color: #666;
 `;
 
 const BLEConnection = ({ onConnectionChange, onAudioData }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [device, setDevice] = useState(null);
   const [error, setError] = useState(null);
+  const [device, setDevice] = useState(null);
+  const [bluetoothAvailable, setBluetoothAvailable] = useState(false);
+  const [connectionInfo, setConnectionInfo] = useState(null);
 
-  // BLE Configuration (matching auto_pitch_recorder.py)
+  const audioCharacteristicRef = useRef(null);
+  const deviceRef = useRef(null);
+
+  // BLE Configuration (matching firmware)
   const AUDIO_SERVICE_UUID = "12345678-1234-5678-1234-567812345678";
   const AUDIO_CHAR_UUID = "12345679-1234-5678-1234-567812345678";
 
-  const scanForDevices = useCallback(async () => {
+  // Check Web Bluetooth availability
+  useEffect(() => {
+    const checkBluetoothSupport = () => {
+      if (navigator.bluetooth) {
+        setBluetoothAvailable(true);
+        console.log('✅ Web Bluetooth API is available');
+      } else {
+        setBluetoothAvailable(false);
+        setError('Web Bluetooth API not supported. Please use Chrome or Edge browser.');
+        console.error('❌ Web Bluetooth API not supported');
+      }
+    };
+
+    checkBluetoothSupport();
+  }, []);
+
+  const handleBLEError = useCallback((error, context) => {
+    console.error(`❌ BLE Error in ${context}:`, error);
+    
+    let errorMessage = 'Unknown error';
+    
+    if (error.name === 'NotFoundError') {
+      errorMessage = 'No XIAO device found. Make sure it\'s powered on and advertising.';
+    } else if (error.name === 'SecurityError') {
+      errorMessage = 'Bluetooth permission denied. Please allow Bluetooth access.';
+    } else if (error.name === 'NetworkError') {
+      errorMessage = 'Connection failed. Try moving closer to the device.';
+    } else if (error.name === 'NotSupportedError') {
+      errorMessage = 'Bluetooth LE not supported on this device.';
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    
+    setError(errorMessage);
+    setIsConnecting(false);
+    setIsConnected(false);
+    onConnectionChange(false);
+  }, [onConnectionChange]);
+
+  const scanAndConnect = useCallback(async () => {
+    if (!bluetoothAvailable) {
+      setError('Web Bluetooth not available');
+      return;
+    }
+
     try {
       setIsConnecting(true);
       setError(null);
+      console.log('🔍 Starting BLE scan for XIAO device...');
 
-      // Check if Web Bluetooth is supported
-      if (!navigator.bluetooth) {
-        throw new Error('Web Bluetooth is not supported in this browser');
-      }
-
-      // Request device with specific service
+      // Request device with specific service UUID
       const device = await navigator.bluetooth.requestDevice({
         filters: [
-          { namePrefix: 'AudioStreamer' },
-          { namePrefix: 'MicStreamer' },
-          { namePrefix: 'XIAO' }
+          { services: [AUDIO_SERVICE_UUID] },
+          { name: 'MicStreamer' }
         ],
         optionalServices: [AUDIO_SERVICE_UUID]
       });
 
-      console.log('Found device:', device);
+      console.log('📱 Found device:', device);
       setDevice(device);
+      deviceRef.current = device;
 
-      // Listen for disconnection
-      device.addEventListener('gattserverdisconnected', () => {
-        setIsConnected(false);
-        setDevice(null);
-        onConnectionChange(false);
+      // Connect to device
+      console.log('🔗 Connecting to device...');
+      const server = await device.gatt.connect();
+      console.log('✅ Connected to GATT server');
+
+      // Get the audio service
+      console.log('🔍 Discovering services...');
+      const service = await server.getPrimaryService(AUDIO_SERVICE_UUID);
+      console.log('✅ Found audio service');
+
+      // Get the audio characteristic
+      console.log('🔍 Getting audio characteristic...');
+      const characteristic = await service.getCharacteristic(AUDIO_CHAR_UUID);
+      console.log('✅ Found audio characteristic');
+
+      audioCharacteristicRef.current = characteristic;
+
+      // Set up audio data monitoring
+      console.log('🎧 Starting audio notifications...');
+      await characteristic.startNotifications();
+
+      characteristic.addEventListener('characteristicvaluechanged', (event) => {
+        const value = event.target.value;
+        const audioData = new Int16Array(value.buffer);
+        
+        // Pass audio data to parent component
+        if (onAudioData) {
+          onAudioData(audioData, {
+            deviceId: device.id,
+            deviceName: device.name,
+            rssi: device.gatt.connected ? 'Connected' : 'Disconnected',
+            bufferSize: value.buffer.byteLength,
+            sampleCount: audioData.length,
+            bytesPerSample: value.buffer.byteLength / audioData.length
+          });
+        }
       });
 
-      return device;
+      // Set up connection monitoring
+      device.addEventListener('gattserverdisconnected', () => {
+        console.log('🔌 Device disconnected');
+        setIsConnected(false);
+        onConnectionChange(false);
+        setConnectionInfo(null);
+      });
+
+      // Update connection state
+      setIsConnected(true);
+      setIsConnecting(false);
+      onConnectionChange(true);
+      
+      setConnectionInfo({
+        deviceName: device.name,
+        deviceId: device.id,
+        serviceUUID: AUDIO_SERVICE_UUID,
+        characteristicUUID: AUDIO_CHAR_UUID
+      });
+
+      console.log('🎉 BLE connection established successfully!');
+
     } catch (err) {
-      console.error('Scan error:', err);
-      setError(err.message);
-      return null;
+      handleBLEError(err, 'scanAndConnect');
+    }
+  }, [bluetoothAvailable, onConnectionChange, onAudioData, handleBLEError]);
+
+  const disconnect = useCallback(async () => {
+    try {
+      if (deviceRef.current && deviceRef.current.gatt.connected) {
+        console.log('🔌 Disconnecting from device...');
+        deviceRef.current.gatt.disconnect();
+      }
+      
+      setIsConnected(false);
+      setDevice(null);
+      setConnectionInfo(null);
+      audioCharacteristicRef.current = null;
+      deviceRef.current = null;
+      onConnectionChange(false);
+      setError(null);
+      
+      console.log('✅ Disconnected successfully');
+    } catch (err) {
+      console.error('❌ Error during disconnect:', err);
+      setError('Error disconnecting: ' + err.message);
     }
   }, [onConnectionChange]);
 
-  const connectToDevice = useCallback(async () => {
-    try {
-      setIsConnecting(true);
-      setError(null);
-
-      let targetDevice = device;
-      if (!targetDevice) {
-        targetDevice = await scanForDevices();
-        if (!targetDevice) {
-          return;
-        }
-      }
-
-      console.log('Connecting to device...');
-      const server = await targetDevice.gatt.connect();
-      console.log('Connected to GATT server');
-
-      // Get the audio service
-      const service = await server.getPrimaryService(AUDIO_SERVICE_UUID);
-      console.log('Got audio service');
-
-      // Get the audio characteristic
-      const characteristic = await service.getCharacteristic(AUDIO_CHAR_UUID);
-      console.log('Got audio characteristic');
-
-      // Start notifications
-      await characteristic.startNotifications();
-      console.log('Started notifications');
-
-      // Store characteristic for later use
-      setDevice({ ...device, characteristic, server });
-      
-      // Store the characteristic for audio streaming
-      const audioStream = {
-        characteristic,
-        server,
-        device: targetDevice
-      };
-      
-      // Handle incoming audio data
-      characteristic.addEventListener('characteristicvaluechanged', (event) => {
-        const data = event.target.value;
-        const audioData = new Int16Array(data.buffer);
-        
-        // Debug: Log first few packets to see what we're getting
-        if (Math.random() < 0.01) { // 1% chance to log
-          console.log(`🎤 XIAO MIC (BLE): received ${audioData.length} samples, first sample: ${audioData[0]}`);
-          console.log(`   📡 Source: XIAO Board microphone via BLE`);
-          console.log(`   🚫 NOT using laptop microphone`);
-        }
-        
-        // Pass audio data and stream info to parent component
-        if (onAudioData) {
-          onAudioData(audioData, audioStream);
-        }
-      });
-
-      setIsConnected(true);
-      onConnectionChange(true);
-      setError(null);
-
-    } catch (err) {
-      console.error('Connection error:', err);
-      setError(err.message);
-      setIsConnected(false);
-      onConnectionChange(false);
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [device, onConnectionChange, onAudioData, scanForDevices]);
-
-  const disconnectDevice = useCallback(async () => {
-    try {
-      if (device && device.gatt.connected) {
-        device.gatt.disconnect();
-      }
-      setIsConnected(false);
-      setDevice(null);
-      onConnectionChange(false);
-      setError(null);
-    } catch (err) {
-      console.error('Disconnect error:', err);
-      setError(err.message);
-    }
-  }, [device, onConnectionChange]);
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
   return (
     <Container>
-      <Title>🔗 XIAO Board Connection</Title>
+      <Title>🔗 XIAO BLE Connection</Title>
       
-      <Status connected={isConnected}>
-        {isConnected ? (
+      <Status connected={isConnected} error={error}>
+        {error && (
           <>
-            <BluetoothConnected size={20} />
-            Connected to {device?.name || 'XIAO Board'}
+            <BluetoothOff size={20} />
+            Error: {error}
           </>
-        ) : (
+        )}
+        {isConnected && !error && (
           <>
             <Bluetooth size={20} />
-            Not Connected
+            Connected to XIAO Board
+          </>
+        )}
+        {isConnecting && !error && (
+          <>
+            <Bluetooth size={20} />
+            Connecting to XIAO Board...
+          </>
+        )}
+        {!isConnected && !isConnecting && !error && (
+          <>
+            <BluetoothOff size={20} />
+            Ready to Connect
           </>
         )}
       </Status>
 
-      {error && (
-        <div style={{ 
-          color: '#e74c3c', 
-          margin: '1rem 0', 
-          padding: '1rem', 
-          background: '#fdf2f2', 
-          borderRadius: '8px',
-          fontSize: '0.9rem'
-        }}>
-          Error: {error}
+      {bluetoothAvailable ? (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {!isConnected ? (
+            <Button onClick={scanAndConnect} disabled={isConnecting}>
+              <Bluetooth size={20} />
+              {isConnecting ? 'Connecting...' : 'Connect to XIAO'}
+            </Button>
+          ) : (
+            <Button onClick={disconnect} active>
+              <BluetoothOff size={20} />
+              Disconnect
+            </Button>
+          )}
+          
+          {error && (
+            <Button onClick={clearError} secondary>
+              Clear Error
+            </Button>
+          )}
         </div>
+      ) : (
+        <InfoBox>
+          <strong>Web Bluetooth not available</strong><br/>
+          This app requires Web Bluetooth API support. Please use:
+          <ul>
+            <li>Chrome browser (recommended)</li>
+            <li>Microsoft Edge</li>
+            <li>Opera browser</li>
+          </ul>
+          Safari and Firefox do not support Web Bluetooth.
+        </InfoBox>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {!isConnected ? (
-          <Button 
-            onClick={connectToDevice} 
-            disabled={isConnecting}
-          >
-            {isConnecting ? (
-              <>
-                <Wifi size={20} />
-                Connecting...
-              </>
-            ) : (
-              <>
-                <Bluetooth size={20} />
-                Connect to XIAO Board
-              </>
-            )}
-          </Button>
-        ) : (
-          <Button 
-            onClick={disconnectDevice}
-            connected={true}
-          >
-            <WifiOff size={20} />
-            Disconnect
-          </Button>
-        )}
-      </div>
+      {connectionInfo && (
+        <InfoBox>
+          <strong>Connection Details:</strong><br/>
+          Device: {connectionInfo.deviceName}<br/>
+          Service: {connectionInfo.serviceUUID}<br/>
+          Characteristic: {connectionInfo.characteristicUUID}<br/>
+          Status: Connected ✅
+        </InfoBox>
+      )}
 
-      {device && (
-        <DeviceInfo>
-          <strong>Device Info:</strong><br />
-          Name: {device.name || 'Unknown'}<br />
-          ID: {device.id}<br />
-          Connected: {device.gatt?.connected ? 'Yes' : 'No'}
-        </DeviceInfo>
+      {!bluetoothAvailable && (
+        <InfoBox>
+          <strong>Browser Compatibility:</strong><br/>
+          Web Bluetooth API is required for this app to function.<br/>
+          Please switch to a compatible browser or use the iOS app version.
+        </InfoBox>
       )}
     </Container>
   );

@@ -1,0 +1,18 @@
+// App-Warnings.xcconfig
+// Configuration to suppress common warnings
+
+// Suppress deprecation warnings
+GCC_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = NO
+GCC_WARN_INHIBIT_ALL_WARNINGS = YES
+
+// Suppress specific warnings
+CLANG_WARN_DOCUMENTATION_COMMENTS = NO
+CLANG_WARN_STRICT_PROTOTYPES = NO
+CLANG_WARN_COMMA = NO
+CLANG_WARN_UNREACHABLE_CODE = NO
+
+// iOS deployment target
+IPHONEOS_DEPLOYMENT_TARGET = 14.0
+
+// Suppress WebKit warnings
+GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO

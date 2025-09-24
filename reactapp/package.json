@@ -10,13 +10,13 @@
     "eject": "react-scripts eject"
   },
   "dependencies": {
+    "@deepgram/sdk": "^3.4.0",
+    "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "@deepgram/sdk": "^3.4.0",
-    "web-audio-api": "^0.2.2",
     "styled-components": "^6.1.1",
-    "lucide-react": "^0.294.0"
+    "typescript": "^5.9.2"
   },
   "browserslist": {
     "production": [

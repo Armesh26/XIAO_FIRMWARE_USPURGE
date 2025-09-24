@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import styled from 'styled-components';
-import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 import { FileText, Mic, MicOff, Copy, Trash2 } from 'lucide-react';
+import { deepgramService } from '../services/DeepgramService';
+import { audioProcessor } from '../utils/AudioProcessor';
 
 const Container = styled.div`
   background: rgba(255, 255, 255, 0.95);
@@ -144,118 +145,123 @@ const DeepgramTranscriber = ({ isConnected, audioData }) => {
   const [stats, setStats] = useState({ words: 0, characters: 0, duration: 0 });
   const [audioPacketsSent, setAudioPacketsSent] = useState(0);
 
-  const deepgramRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // Deepgram API Key
-  const DEEPGRAM_API_KEY = '6f8cc0568676f91acc28784457aea240539e9aab';
-  
-  // Test API key validity
+  // Initialize Deepgram service listeners
   useEffect(() => {
-    if (DEEPGRAM_API_KEY) {
-      console.log('🔑 Deepgram API Key loaded:', DEEPGRAM_API_KEY.substring(0, 8) + '...');
-    } else {
-      console.error('❌ No Deepgram API Key found');
-      setError('No Deepgram API Key configured');
-    }
-  }, []);
-
-  const initializeDeepgram = useCallback(() => {
-    const deepgram = createClient(DEEPGRAM_API_KEY);
-    
-    const connection = deepgram.listen.live({
-      model: 'nova-3',       // Use the latest model
-      language: 'en-US',
-      smart_format: true,
-      interim_results: true,
-      endpointing: 300,
-      utterance_end_ms: 1000,
-      vad_events: true,
-      encoding: 'linear16',  // Specify the audio encoding for 16-bit PCM
-      sample_rate: 16000,    // Match the firmware sample rate
-      channels: 1,           // Mono audio
-    });
-
-    connection.on(LiveTranscriptionEvents.Open, () => {
-      console.log('✅ Deepgram connection opened successfully');
-      setIsDeepgramConnected(true);
-      setError(null);
-    });
-
-    connection.on(LiveTranscriptionEvents.Transcript, (data) => {
-      console.log('📝 Deepgram transcript received:', data);
-      const transcript = data.channel?.alternatives?.[0]?.transcript;
-      
-      if (transcript && transcript.trim()) {
-        console.log(`🎯 Transcript: "${transcript}" (final: ${data.is_final})`);
-        
-        if (data.is_final) {
-          // Final transcript
-          setTranscription(prev => prev + transcript + ' ');
+    deepgramService.setListeners({
+      onTranscript: (data) => {
+        if (data.isFinal) {
+          setTranscription(prev => prev + data.text + ' ');
           setLiveText('');
           
           // Update stats
           setStats(prev => ({
-            words: prev.words + transcript.split(' ').length,
-            characters: prev.characters + transcript.length,
-            duration: (Date.now() - startTimeRef.current) / 1000
+            words: prev.words + data.text.split(' ').length,
+            characters: prev.characters + data.text.length,
+            duration: startTimeRef.current ? (Date.now() - startTimeRef.current) / 1000 : 0
           }));
         } else {
-          // Interim result
-          setLiveText(transcript);
+          setLiveText(data.text);
         }
-      } else {
-        console.log('⚠️ Empty or no transcript received');
+      },
+      onError: (error) => {
+        console.error('❌ Deepgram error:', error);
+        setError(error.message || 'Transcription error');
+        setIsTranscribing(false);
+        setIsDeepgramConnected(false);
+      },
+      onOpen: () => {
+        console.log('✅ Deepgram connected');
+        setIsDeepgramConnected(true);
+        setError(null);
+      },
+      onClose: () => {
+        console.log('🔌 Deepgram disconnected');
+        setIsDeepgramConnected(false);
+        setIsTranscribing(false);
       }
     });
 
-    connection.on(LiveTranscriptionEvents.Error, (error) => {
-      console.error('❌ Deepgram error:', error);
-      setError(error.message || 'Transcription error');
-      setIsTranscribing(false);
-      setIsDeepgramConnected(false);
-    });
-
-    connection.on(LiveTranscriptionEvents.Close, () => {
-      console.log('Deepgram connection closed');
-      setIsDeepgramConnected(false);
-      setIsTranscribing(false);
-    });
-
-    deepgramRef.current = connection;
-    return connection;
+    // Cleanup on unmount
+    return () => {
+      deepgramService.cleanup();
+    };
   }, []);
 
-  const startTranscription = useCallback(() => {
+  // Handle audio data processing
+  useEffect(() => {
+    if (audioData && isTranscribing && isDeepgramConnected) {
+      try {
+        // Process audio data through audio processor
+        const processedChunk = audioProcessor.processAudioData(audioData);
+        
+        if (processedChunk) {
+          // Convert to format Deepgram expects
+          const deepgramData = audioProcessor.convertForDeepgram(processedChunk);
+          
+          // Send to Deepgram
+          const success = deepgramService.sendAudioData(deepgramData);
+          
+          if (success) {
+            setAudioPacketsSent(prev => prev + 1);
+            
+            // Log every 50 packets
+            if (audioPacketsSent % 50 === 0) {
+              console.log(`🎵 Sent ${processedChunk.length} samples to Deepgram (packet ${audioPacketsSent + 1})`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error processing audio data:', error);
+        setError('Failed to process audio data: ' + error.message);
+      }
+    }
+  }, [audioData, isTranscribing, isDeepgramConnected, audioPacketsSent]);
+
+  const startTranscription = useCallback(async () => {
     if (!isConnected) {
       alert('Please connect to XIAO board first');
       return;
     }
 
     try {
-      console.log('🎯 Starting transcription...');
-      const connection = initializeDeepgram();
-      setIsTranscribing(true);
-      setTranscription('');
-      setLiveText('');
-      setError(null);
-      startTimeRef.current = Date.now();
-      setAudioPacketsSent(0);
+      console.log('🎯 Starting Deepgram transcription...');
       
-      console.log('✅ Transcription started, waiting for audio data...');
+      const success = await deepgramService.startTranscription();
+      
+      if (success) {
+        setIsTranscribing(true);
+        setTranscription('');
+        setLiveText('');
+        setError(null);
+        setAudioPacketsSent(0);
+        startTimeRef.current = Date.now();
+        
+        // Reset audio processor
+        audioProcessor.reset();
+        
+        console.log('✅ Transcription started successfully');
+      } else {
+        setError('Failed to start Deepgram transcription');
+      }
     } catch (err) {
       console.error('❌ Failed to start transcription:', err);
-      setError(err.message);
+      setError(err.message || 'Failed to start transcription');
     }
-  }, [isConnected, initializeDeepgram]);
+  }, [isConnected]);
 
   const stopTranscription = useCallback(() => {
-    if (deepgramRef.current) {
-      deepgramRef.current.finish();
-      deepgramRef.current = null;
+    try {
+      deepgramService.stopTranscription();
+      setIsTranscribing(false);
+      setIsDeepgramConnected(false);
+      console.log('🛑 Transcription stopped');
+    } catch (err) {
+      console.error('❌ Error stopping transcription:', err);
+      setIsTranscribing(false);
+      setIsDeepgramConnected(false);
     }
-    setIsTranscribing(false);
-    setIsDeepgramConnected(false);
   }, []);
 
   const clearTranscription = useCallback(() => {
@@ -267,58 +273,12 @@ const DeepgramTranscriber = ({ isConnected, audioData }) => {
   const copyTranscription = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(transcription.trim());
-      // Could add a toast notification here
+      console.log('✅ Transcription copied to clipboard');
     } catch (err) {
-      console.error('Failed to copy text:', err);
+      console.error('❌ Failed to copy text:', err);
+      alert('Failed to copy text to clipboard');
     }
   }, [transcription]);
-
-  // Handle real-time audio data from BLE (continuous stream)
-  useEffect(() => {
-    if (audioData && isTranscribing && deepgramRef.current && isDeepgramConnected) {
-      // The firmware sends 160 samples every 10ms continuously
-      // Deepgram expects raw PCM data as Uint8Array
-      const buffer = new ArrayBuffer(audioData.length * 2);
-      const view = new DataView(buffer);
-      for (let i = 0; i < audioData.length; i++) {
-        view.setInt16(i * 2, audioData[i], true);
-      }
-      
-      // Convert to Uint8Array for Deepgram
-      const uint8Array = new Uint8Array(buffer);
-      
-      // Send audio data to Deepgram in real-time
-      try {
-        deepgramRef.current.send(uint8Array);
-        
-        // Track packets sent
-        setAudioPacketsSent(prev => prev + 1);
-        
-        // Log every 100 packets to avoid spam
-        if (Math.random() < 0.01) { // 1% chance to log
-          console.log(`🎵 Transcribing XIAO MIC: sent ${audioData.length} samples (${uint8Array.length} bytes) to Deepgram`);
-          console.log(`   🎤 Source: XIAO Board microphone (NOT laptop mic)`);
-          console.log(`   First few samples: [${audioData.slice(0, 5).join(', ')}]`);
-          console.log(`   Audio range: ${Math.min(...audioData)} to ${Math.max(...audioData)}`);
-          console.log(`   Deepgram connected: ${isDeepgramConnected}`);
-        }
-      } catch (error) {
-        console.error('❌ Error sending audio to Deepgram:', error);
-        setError('Failed to send audio to Deepgram: ' + error.message);
-      }
-    } else if (audioData && isTranscribing && !isDeepgramConnected) {
-      console.log('⚠️ Audio data received but Deepgram not connected yet');
-    }
-  }, [audioData, isTranscribing, isDeepgramConnected]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (deepgramRef.current) {
-        deepgramRef.current.finish();
-      }
-    };
-  }, []);
 
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -328,7 +288,7 @@ const DeepgramTranscriber = ({ isConnected, audioData }) => {
 
   return (
     <Container>
-      <Title>🎯 Deepgram Transcription</Title>
+      <Title>🎯 Deepgram Nova-3 Transcription</Title>
       
       <Status active={isTranscribing} error={error}>
         {error && (
@@ -340,7 +300,7 @@ const DeepgramTranscriber = ({ isConnected, audioData }) => {
         {isTranscribing && !error && (
           <>
             <Mic size={20} />
-            {isDeepgramConnected ? 'Transcribing XIAO MIC (BLE)...' : 'Connecting to Deepgram...'}
+            {isDeepgramConnected ? 'Transcribing XIAO Audio...' : 'Connecting to Deepgram...'}
           </>
         )}
         {!isTranscribing && !error && (

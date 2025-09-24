@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generate iOS App Assets</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .asset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .asset-item {
+            text-align: center;
+            padding: 15px;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .asset-item h3 {
+            margin: 0 0 10px 0;
+            color: #666;
+            font-size: 14px;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a6fd8;
+        }
+        .instructions {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #667eea;
+        }
+        .instructions h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 iOS App Assets Generator</h1>
+        
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ol>
+                <li>Click "Generate All Assets" to create all required iOS app icons</li>
+                <li>Right-click each canvas and "Save image as..." to download</li>
+                <li>Name files according to the labels shown</li>
+                <li>Use these icons in your Xcode project's Assets.xcassets</li>
+            </ol>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button onclick="generateAllAssets()">Generate All Assets</button>
+            <button onclick="downloadAllAssets()">Download All as ZIP</button>
+        </div>
+
+        <div class="asset-grid">
+            <div class="asset-item">
+                <h3>App Store (1024x1024)</h3>
+                <canvas id="canvas1024" width="1024" height="1024" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas1024', 'AppStore-1024.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone App (180x180)</h3>
+                <canvas id="canvas180" width="180" height="180" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas180', 'iPhone-App-180.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone App (120x120)</h3>
+                <canvas id="canvas120" width="120" height="120" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas120', 'iPhone-App-120.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone Settings (87x87)</h3>
+                <canvas id="canvas87" width="87" height="87" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas87', 'iPhone-Settings-87.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone Settings (58x58)</h3>
+                <canvas id="canvas58" width="58" height="58" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas58', 'iPhone-Settings-58.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone Spotlight (120x120)</h3>
+                <canvas id="canvas120spot" width="120" height="120" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas120spot', 'iPhone-Spotlight-120.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPhone Spotlight (80x80)</h3>
+                <canvas id="canvas80" width="80" height="80" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas80', 'iPhone-Spotlight-80.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPad App (152x152)</h3>
+                <canvas id="canvas152" width="152" height="152" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas152', 'iPad-App-152.png')">Download</button>
+            </div>
+
+            <div class="asset-item">
+                <h3>iPad App (76x76)</h3>
+                <canvas id="canvas76" width="76" height="76" style="width: 100px; height: 100px;"></canvas>
+                <button onclick="downloadCanvas('canvas76', 'iPad-App-76.png')">Download</button>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>Next Steps:</h3>
+            <ol>
+                <li>Open Xcode and your iOS project</li>
+                <li>Navigate to Assets.xcassets → AppIcon</li>
+                <li>Drag the downloaded icons to the appropriate slots</li>
+                <li>Build and test your app!</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        function createIcon(canvasId, size) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, size, size);
+            
+            // Create gradient background
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#667eea');
+            gradient.addColorStop(1, '#764ba2');
+            
+            // Draw background with rounded corners
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, size * 0.2);
+            ctx.fill();
+            
+            // Add subtle border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Draw microphone icon
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${size * 0.4}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎤', size/2, size/2);
+            
+            // Add subtle shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+            ctx.shadowBlur = size * 0.05;
+            ctx.shadowOffsetY = size * 0.02;
+            ctx.fillText('🎤', size/2, size/2);
+        }
+
+        function generateAllAssets() {
+            createIcon('canvas1024', 1024);
+            createIcon('canvas180', 180);
+            createIcon('canvas120', 120);
+            createIcon('canvas87', 87);
+            createIcon('canvas58', 58);
+            createIcon('canvas120spot', 120);
+            createIcon('canvas80', 80);
+            createIcon('canvas152', 152);
+            createIcon('canvas76', 76);
+        }
+
+        function downloadCanvas(canvasId, filename) {
+            const canvas = document.getElementById(canvasId);
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function downloadAllAssets() {
+            // Generate all assets first
+            generateAllAssets();
+            
+            // Create a zip file with all assets
+            setTimeout(() => {
+                const canvases = [
+                    { id: 'canvas1024', name: 'AppStore-1024.png' },
+                    { id: 'canvas180', name: 'iPhone-App-180.png' },
+                    { id: 'canvas120', name: 'iPhone-App-120.png' },
+                    { id: 'canvas87', name: 'iPhone-Settings-87.png' },
+                    { id: 'canvas58', name: 'iPhone-Settings-58.png' },
+                    { id: 'canvas120spot', name: 'iPhone-Spotlight-120.png' },
+                    { id: 'canvas80', name: 'iPhone-Spotlight-80.png' },
+                    { id: 'canvas152', name: 'iPad-App-152.png' },
+                    { id: 'canvas76', name: 'iPad-App-76.png' }
+                ];
+                
+                canvases.forEach(canvas => {
+                    setTimeout(() => downloadCanvas(canvas.id, canvas.name), 100);
+                });
+            }, 100);
+        }
+
+        // Generate assets on page load
+        window.onload = function() {
+            generateAllAssets();
+        };
+    </script>
+</body>
+</html>
